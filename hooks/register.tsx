@@ -1,36 +1,36 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentInfo, Register } from 'claude-code'
 
-import type { AgentSuivi, Plan, Tour, VueBande } from '../types'
-import { avancer, lirePlan, terminer } from './dessin'
-import { positionVisible } from './mouvement'
-import { etapeMontree, finVisuelle, ORANGE, pointsTexte, sceneSvg } from './points'
-import type { Vue } from './points'
-import { agentSvg, barreMini, icone } from './pixels'
-import type { EtatAgent, EtatEtape } from './pixels'
-import { compterAction, duree, finirAgent, finirTour, nombre, nomModele, nouveauTour, noterEtape } from './suivi'
-import { textes } from './textes'
+import type { BandView, Plan, TrackedAgent, Turn } from '../types'
+import { dotsText, ORANGE, sceneSvg, shownStep, visualEnd } from './dots'
+import type { View } from './dots'
+import { agentSvg, miniBar, stepIcon } from './icons'
+import type { AgentState, StepState } from './icons'
+import { visiblePosition } from './motion'
+import { advance, finish, readPlan } from './plan'
+import { strings } from './strings'
+import { compactNumber, countAction, duration, endAgent, endTurn, modelName, newTurn, recordStep } from './tracking'
 
-const PLUGIN = 'barre-progression'
-const OUTIL = `mcp__${PLUGIN}__progression`
-const PANNEAU = 'progression'
+const PLUGIN = 'progress-bar'
+const TOOL = `mcp__${PLUGIN}__progress`
+const PANEL = 'progress'
 
-const plan = atom({ plugin: 'barre-progression', key: 'plan' } as const, null as Plan | null)
-const tour = atom({ plugin: 'barre-progression', key: 'tour' } as const, null as Tour | null)
-// Un battement par seconde pendant le travail: le panneau le lit pour ses durées, le terminal pour
-// son signe animé. La barre de l'app de bureau ne le lit pas: elle ne bouge pas entre deux étapes.
-const tic = atom({ plugin: 'barre-progression', key: 'tic' } as const, 0)
-// Ce que la bande montre, écrit seulement quand une étape change ou que le travail finit.
-const vue = atom({ plugin: 'barre-progression', key: 'vue' } as const, null as VueBande | null)
-// Le plan dont le Client a échoué dans l'app (l'heure de sa première étape): pour ce plan, la bande
-// dessine l'image elle-même; le plan suivant retente le Client.
-const enPanne = atom({ plugin: 'barre-progression', key: 'enPanne' } as const, null as number | null)
-// Ce que le dessin reçoit de la bande.
-const vuePour = (v: VueBande): Vue => ({ n: v.etapes.length, ev: v.ev, fin: v.fin, graine: v.graine ?? v.ev[0]?.[1] ?? 0 })
-// Au-delà, l'histoire d'une même liste d'étapes n'apprend plus rien (elle ne fait qu'avancer).
-const HISTOIRE_MAX = 1000
+const plan = atom({ plugin: 'progress-bar', key: 'plan' } as const, null as Plan | null)
+const turn = atom({ plugin: 'progress-bar', key: 'turn' } as const, null as Turn | null)
+// One beat per second while working: the panel reads it for its durations, the terminal for its
+// animated glyph. The desktop app's bar does not read it: it does not move between two steps.
+const tick = atom({ plugin: 'progress-bar', key: 'tick' } as const, 0)
+// What the band shows, written only when a step changes or the work ends.
+const view = atom({ plugin: 'progress-bar', key: 'view' } as const, null as BandView | null)
+// The plan whose Client failed in the app (the time of its first step): for that plan, the band draws
+// the image itself; the next plan tries the Client again.
+const faultedPlan = atom({ plugin: 'progress-bar', key: 'faultedPlan' } as const, null as number | null)
+// What the drawing receives from the band.
+const viewOf = (v: BandView): View => ({ n: v.steps.length, events: v.events, end: v.end, seed: v.seed ?? v.events[0]?.[1] ?? 0 })
+// Beyond this, the history of one list of steps teaches nothing more (it only moves forward).
+const MAX_HISTORY = 1000
 
-// Ce que lit le modèle: en anglais, quelle que soit la langue de l'interface.
+// What the model reads: in English, whatever the interface language.
 const DESCRIPTION =
   'Shows the person a progress bar above their prompt while you work. ' +
   'Call this tool at the start of any request that will take you more than three actions, with `steps` ' +
@@ -54,52 +54,52 @@ const SCHEMA = {
   additionalProperties: false,
 }
 
-const CONSIGNE = {
-  id: `${PLUGIN}:consigne`,
+const INSTRUCTION = {
+  id: `${PLUGIN}:instruction`,
   text:
-    `When a request will take you more than three actions, first call ${OUTIL} with your steps, ` +
+    `When a request will take you more than three actions, first call ${TOOL} with your steps, ` +
     'then call it again each time a new step starts. Never for a short answer, never from a subagent.',
   scope: 'session',
 } as const
 
-const TERMINES: AgentInfo['status'][] = ['completed', 'failed', 'killed']
+const FINISHED: AgentInfo['status'][] = ['completed', 'failed', 'killed']
 
-// Ce que le panneau montre d'un agent: le suivi du tour, complété par la liste du moteur.
-type LigneAgent = AgentSuivi & { description: string; type?: string; etat: EtatAgent }
+// What the panel shows of an agent: the turn's tracking, completed by the engine's list.
+type AgentRow = TrackedAgent & { description: string; type?: string; state: AgentState }
 
-function lignesAgents(suivis: AgentSuivi[], infos: AgentInfo[], debutTour: number): LigneAgent[] {
-  const vus = new Set(suivis.map(a => a.id))
-  const enAttente = infos
-    .filter(i => !vus.has(i.id) && !TERMINES.includes(i.status) && i.status !== 'idle')
-    .map((i): AgentSuivi => ({ id: i.id, debut: debutTour, actions: 0 }))
+function agentRows(tracked: TrackedAgent[], infos: AgentInfo[], turnStart: number): AgentRow[] {
+  const seen = new Set(tracked.map(a => a.id))
+  const pending = infos
+    .filter(i => !seen.has(i.id) && !FINISHED.includes(i.status) && i.status !== 'idle')
+    .map((i): TrackedAgent => ({ id: i.id, start: turnStart, actions: 0 }))
 
-  return [...suivis, ...enAttente].map(a => {
+  return [...tracked, ...pending].map(a => {
     const info = infos.find(i => i.id === a.id)
-    const fini = a.fin !== undefined || (info !== undefined && TERMINES.includes(info.status))
-    const arrete = a.arrete || info?.status === 'failed' || info?.status === 'killed'
+    const done = a.end !== undefined || (info !== undefined && FINISHED.includes(info.status))
+    const stopped = a.stopped || info?.status === 'failed' || info?.status === 'killed'
     return {
       ...a,
       description: info?.description || info?.name || 'Agent',
       type: info?.type,
-      etat: arrete ? 'arrete' : fini ? 'fini' : 'actif',
+      state: stopped ? 'stopped' : done ? 'done' : 'running',
     }
   })
 }
 
 export const register: Register = (on, options) => {
-  // La langue de l'interface: l'option `language` du mod (anglais par défaut).
-  const T = textes(options.language)
+  // The interface language: the mod's `language` option (English by default).
+  const T = strings(options.language)
 
   on('session.start', async ($, e, next) => {
-    await $.tool.register({ name: 'progression', description: DESCRIPTION, inputSchema: SCHEMA, isDeferred: false })
-    await $.command.register({ name: 'progression', description: T.commande })
+    await $.tool.register({ name: 'progress', description: DESCRIPTION, inputSchema: SCHEMA, isDeferred: false })
+    await $.command.register({ name: 'progress', description: T.command })
     $.clock.every(1000, () => {
       void (async () => {
-        // Tant qu'un tour ou une barre est en cours: le panneau compte le temps, la bande se redessine.
-        const t = await read($, tour)
+        // While a turn or a bar is in progress: the panel counts the time, the band redraws.
+        const t = await read($, turn)
         const p = await read($, plan)
-        const v = await read($, vue)
-        if ((t !== null && t.fin === undefined) || (p !== null && !p.fini) || v !== null) await update($, tic, n => n + 1)
+        const v = await read($, view)
+        if ((t !== null && t.end === undefined) || (p !== null && !p.done) || v !== null) await update($, tick, n => n + 1)
       })()
     })
 
@@ -109,101 +109,101 @@ export const register: Register = (on, options) => {
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
 
-    return { ...composed, sections: [...composed.sections, CONSIGNE] }
+    return { ...composed, sections: [...composed.sections, INSTRUCTION] }
   })
 
-  // Comme les commandes de l'app qui ouvrent un panneau: rien n'est écrit dans la conversation.
-  on('command.run', { command: 'progression' }, async $ => {
-    await $.ui.open({ id: PANNEAU, title: T.progression })
+  // Like the app's commands that open a panel: nothing is written to the conversation.
+  on('command.run', { command: 'progress' }, async $ => {
+    await $.ui.open({ id: PANEL, title: T.progress })
 
     return {}
   })
 
-  // Un nouveau tour commence avec la demande de la personne; un message envoyé pendant le travail le
-  // prolonge.
+  // A new turn begins with the person's request; a message sent during the work extends it.
   on('turn.start', async ($, e, next) => {
-    const t = await read($, tour)
-    if (t === null || t.fin !== undefined) {
-      const maintenant = await $.clock.now()
-      await update($, tour, () => nouveauTour(e.text, maintenant))
+    const t = await read($, turn)
+    if (t === null || t.end !== undefined) {
+      const now = await $.clock.now()
+      await update($, turn, () => newTurn(e.text, now))
     }
 
     return next(e)
   })
 
-  // Chaque action de Claude ou d'un agent est comptée et fait avancer la barre d'un cran: c'est le
-  // rythme réel du travail. L'outil de la barre ne compte pas.
+  // Each action by Claude or an agent is counted and moves the bar one notch: that is the real rhythm
+  // of the work. The bar's own tool does not count.
   on('tool.call', async ($, e, next) => {
-    if (e.tool !== OUTIL) {
-      const maintenant = await $.clock.now()
-      const t = await read($, tour)
-      if (t !== null && t.fin === undefined) {
-        await update($, tour, x => (x === null ? x : compterAction(x, e.agentId, maintenant)))
+    if (e.tool !== TOOL) {
+      const now = await $.clock.now()
+      const t = await read($, turn)
+      if (t !== null && t.end === undefined) {
+        await update($, turn, x => (x === null ? x : countAction(x, e.agentId, now)))
       }
-      // Rien n'est écrit sans plan en cours: une écriture, même identique, fait tout redessiner.
+      // Nothing is written without a plan in progress: a write, even an identical one, makes
+      // everything redraw.
       const p = await read($, plan)
-      if (p !== null && !p.fini) await update($, plan, x => (x === null || x.fini ? x : avancer(x, maintenant)))
+      if (p !== null && !p.done) await update($, plan, x => (x === null || x.done ? x : advance(x, now)))
     }
 
     return next(e)
   })
 
-  on('tool.call', { tool: 'mcp__barre-progression__progression' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__progress-bar__progress' }, async ($, e) => {
     if (e.agentId !== undefined) {
       return { result: 'Ignored: the bar only follows the main conversation.' }
     }
 
-    const maintenant = await $.clock.now()
-    const avant = await read($, plan)
-    const lu = lirePlan(e, avant, maintenant)
-    if (typeof lu === 'string') return { deny: lu }
-    if (lu === avant) return { result: `The bar is already at step ${lu.etape} of ${lu.etapes.length}.` }
+    const now = await $.clock.now()
+    const previous = await read($, plan)
+    const parsed = readPlan(e, previous, now)
+    if (typeof parsed === 'string') return { deny: parsed }
+    if (parsed === previous) return { result: `The bar is already at step ${parsed.step} of ${parsed.steps.length}.` }
 
-    await update($, plan, () => lu)
-    await update($, tour, x => (x === null ? x : noterEtape(x, lu, maintenant)))
-    // La bande: la même liste d'étapes prolonge son histoire; une autre liste repart de zéro.
-    await update($, vue, v =>
-      v !== null && v.fin === null && v.etapes.join('\n') === lu.etapes.join('\n') && v.ev.length < HISTOIRE_MAX
-        ? { ...v, ev: [...v.ev, [lu.etape, maintenant] as [number, number]] }
-        : // L'heure du plan sert de graine: chaque tâche tire son propre ordre de danses.
-          { etapes: lu.etapes, ev: [[lu.etape, maintenant] as [number, number]], fin: null, graine: maintenant },
+    await update($, plan, () => parsed)
+    await update($, turn, x => (x === null ? x : recordStep(x, parsed, now)))
+    // The band: the same list of steps extends its history; another list starts from zero.
+    await update($, view, v =>
+      v !== null && v.end === null && v.steps.join('\n') === parsed.steps.join('\n') && v.events.length < MAX_HISTORY
+        ? { ...v, events: [...v.events, [parsed.step, now] as [number, number]] }
+        : // The plan's time serves as the seed: each task draws its own dance order.
+          { steps: parsed.steps, events: [[parsed.step, now] as [number, number]], end: null, seed: now },
     )
 
-    return { result: `Bar updated: step ${lu.etape} of ${lu.etapes.length}.` }
+    return { result: `Bar updated: step ${parsed.step} of ${parsed.steps.length}.` }
   }).catch(() => ({ result: 'The bar is unavailable for this call; carry on with the work.' }))
 
-  // La fin d'un agent note ses jetons. La fin de Claude joue la complétude de la barre et ferme le
-  // tour; un arrêt ou une erreur efface la barre tout de suite. Rien au début d'un tour: un message
-  // envoyé pendant que Claude travaille en ouvre un, et la barre en cours doit survivre.
+  // An agent's end records its tokens. Claude's end plays the bar's completion and closes the turn; a
+  // stop or an error clears the bar at once. Nothing at the start of a turn: a message sent while
+  // Claude works opens one, and the bar in progress must survive.
   on('turn.complete', async ($, e, next) => {
-    const maintenant = await $.clock.now()
-    const arrete = e.reason !== 'answer'
+    const now = await $.clock.now()
+    const stopped = e.reason !== 'answer'
 
     if (e.agentId !== undefined) {
       const id = e.agentId
-      await update($, tour, x => (x === null || x.fin !== undefined ? x : finirAgent(x, id, maintenant, e.usage, arrete)))
+      await update($, turn, x => (x === null || x.end !== undefined ? x : endAgent(x, id, now, e.usage, stopped)))
       return next(e)
     }
 
-    await update($, tour, x => (x === null || x.fin !== undefined ? x : finirTour(x, maintenant, arrete)))
-    const actuel = await read($, plan)
-    const montree = await read($, vue)
-    if (arrete) {
-      if (actuel !== null && !actuel.fini) await update($, plan, () => null)
-      if (montree !== null) await update($, vue, () => null)
+    await update($, turn, x => (x === null || x.end !== undefined ? x : endTurn(x, now, stopped)))
+    const current = await read($, plan)
+    const shown = await read($, view)
+    if (stopped) {
+      if (current !== null && !current.done) await update($, plan, () => null)
+      if (shown !== null) await update($, view, () => null)
     } else {
-      if (actuel !== null && !actuel.fini) await update($, plan, () => terminer(actuel, maintenant))
-      if (montree !== null && montree.fin === null) {
-        const finie = { ...montree, fin: maintenant }
-        await update($, vue, () => finie)
-        // La barre est retirée une fois effacée (le messager en route finit d'abord son vol).
-        const efface = finVisuelle(vuePour(finie)) ?? maintenant
-        // Une marge: l'affichage part de l'heure où il voit la dernière étape et la fin, au plus 400 ms
-        // après que le moteur les a notées (barre-client.tsx).
-        $.clock.after(Math.max(0, efface - maintenant) + 450, () => {
+      if (current !== null && !current.done) await update($, plan, () => finish(current, now))
+      if (shown !== null && shown.end === null) {
+        const ended = { ...shown, end: now }
+        await update($, view, () => ended)
+        // The bar is removed once it has faded out (a messenger in flight finishes its flight first).
+        const clearedAt = visualEnd(viewOf(ended)) ?? now
+        // A margin: the display starts from the time it sees the last step and the end, at most 400 ms
+        // after the engine recorded them (bar-client.tsx).
+        $.clock.after(Math.max(0, clearedAt - now) + 450, () => {
           void (async () => {
-            if ((await read($, vue))?.fin === maintenant) await update($, vue, () => null)
-            if ((await read($, plan))?.fini) await update($, plan, () => null)
+            if ((await read($, view))?.end === now) await update($, view, () => null)
+            if ((await read($, plan))?.done) await update($, plan, () => null)
           })()
         })
       }
@@ -213,125 +213,125 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const v = await read($, vue)
+    const v = await read($, view)
     const isQuiet = e.props.hasSurvey || e.props.view.agentId !== undefined
 
     if (isQuiet || v === null) {
       return next(e)
     }
 
-    // Comme les bandes de l'app: le texte dans les couleurs du thème, l'étape en clair à gauche, le
-    // compte en retrait à droite; l'orange est réservé à la barre.
-    const total = v.etapes.length
-    const enCours = etapeMontree(vuePour(v))
-    const titre = v.fin !== null ? T.termine : (v.etapes[enCours - 1] ?? '')
-    const compteur = T.etapeSur(v.fin !== null ? total : enCours, total)
-    const alt = v.fin !== null ? T.travailTermine : `${compteur}: ${titre}`
-    const ouvrir = () => $.ui.open({ id: PANNEAU, title: T.progression })
+    // Like the app's bands: the text in the theme's colors, the step in plain text on the left, the
+    // count dimmed on the right; orange is kept for the bar.
+    const total = v.steps.length
+    const current = shownStep(viewOf(v))
+    const title = v.end !== null ? T.done : (v.steps[current - 1] ?? '')
+    const counter = T.stepOf(v.end !== null ? total : current, total)
+    const alt = v.end !== null ? T.workDone : `${counter}: ${title}`
+    const openPanel = () => $.ui.open({ id: PANEL, title: T.progress })
     const { Box, Button, Text } = $.ui.resolve(e)
-    const ligne = (
-      <Box key="ligne" flexDirection="row" gap={1} alignItems="center">
-        <Box key="titre" flexGrow={1} flexShrink={1}>
-          <Text wrap="truncate-end">{titre}</Text>
+    const row = (
+      <Box key="row" flexDirection="row" gap={1} alignItems="center">
+        <Box key="title" flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate-end">{title}</Text>
         </Box>
-        <Box key="compte" flexShrink={0}>
-          <Text dimColor>{compteur}</Text>
+        <Box key="count" flexShrink={0}>
+          <Text dimColor>{counter}</Text>
         </Box>
-        <Button key="details" label={T.details} hotkey="d" onPress={ouvrir} />
+        <Button key="details" label={T.details} hotkey="d" onPress={openPanel} />
       </Box>
     )
 
     if (e.surface === 'terminal') {
-      await read($, tic)
-      const maintenant = await $.clock.now()
+      await read($, tick)
+      const now = await $.clock.now()
       return (
-        <Box key="barre" flexDirection="column">
-          {ligne}
-          <Text color={ORANGE}>{pointsTexte(vuePour(v), maintenant, Math.max(10, e.props.bodyColumns - 1))}</Text>
+        <Box key="bar" flexDirection="column">
+          {row}
+          <Text color={ORANGE}>{dotsText(viewOf(v), now, Math.max(10, e.props.bodyColumns - 1))}</Text>
         </Box>
       )
     }
 
-    // Sur le bureau, la barre est un Client: l'app le garde tel quel entre deux réponses du moteur, et
-    // il ne se redessine qu'avec ses props, c'est-à-dire quand une étape change ou que le travail finit.
-    if (e.surface === 'desktop' && (await read($, enPanne)) !== (v.ev[0]?.[1] ?? null)) {
+    // On the desktop, the bar is a Client: the app keeps it as it is between two replies from the
+    // engine, and it only redraws with its props, that is, when a step changes or the work ends.
+    if (e.surface === 'desktop' && (await read($, faultedPlan)) !== (v.events[0]?.[1] ?? null)) {
       const { Client } = $.ui.resolve(e)
       return (
-        <Box key="barre" flexDirection="column" gap={1}>
-          {ligne}
-          <Client key="fil" module="./barre-client.tsx" props={{ vue: vuePour(v), alt }} width="100%" />
+        <Box key="bar" flexDirection="column" gap={1}>
+          {row}
+          <Client key="thread" module="./bar-client.tsx" props={{ view: viewOf(v), alt }} width="100%" />
         </Box>
       )
     }
 
-    // Ailleurs, ou si le Client a échoué: l'image directement, refaite chaque seconde.
-    await read($, tic)
-    const maintenant = await $.clock.now()
+    // Elsewhere, or if the Client failed: the image directly, redrawn every second.
+    await read($, tick)
+    const now = await $.clock.now()
     const { Svg } = $.ui.resolve(e)
     return (
-      <Box key="barre" flexDirection="column" gap={1}>
-        {ligne}
-        <Svg key="fil" source={sceneSvg(vuePour(v), maintenant)} alt={alt} width={4096} height={26} />
+      <Box key="bar" flexDirection="column" gap={1}>
+        {row}
+        <Svg key="thread" source={sceneSvg(viewOf(v), now)} alt={alt} width={4096} height={26} />
       </Box>
     )
   })
 
-  // Le Client de la barre a échoué dans l'app: pour ce plan, la bande repasse à l'image dessinée par
-  // le moteur, et la raison va au journal de débogage.
+  // The bar's Client failed in the app: for this plan, the band falls back to the image drawn by the
+  // engine, and the reason goes to the debug log.
   on('ui.fault', async ($, e, next) => {
-    if (e.module.includes('barre-client')) {
-      const v = await read($, vue)
-      await update($, enPanne, () => v?.ev[0]?.[1] ?? null)
-      $.ui.log(`barre-progression: l'affichage de la barre a échoué (${e.phase}): ${e.reason}`, { to: 'debug' })
+    if (e.module.includes('bar-client')) {
+      const v = await read($, view)
+      await update($, faultedPlan, () => v?.events[0]?.[1] ?? null)
+      $.ui.log(`progress-bar: the bar display failed (${e.phase}): ${e.reason}`, { to: 'debug' })
     }
 
     return next(e)
   })
 
-  // Le panneau, dans la grammaire des panneaux de l'app: la demande et son état, la barre, quatre
-  // chiffres sans cadre, les étapes avec leur icône et leur durée, puis les agents, chacun avec ses
-  // quatre points. Aucune couleur écrite en dur pour le texte: tout suit le thème de la personne. Rien de
-  // plus large que sa place dans une rangée: une image trop large y déborde au lieu de rapetisser.
-  on('ui.render', { component: 'Pane', requestId: 'progression' }, async ($, e) => {
-    await read($, tic)
-    const t = await read($, tour)
+  // The panel, in the grammar of the app's panels: the request and its status, the bar, four figures
+  // without a frame, the steps with their icon and duration, then the agents, each with its four
+  // dots. No color hard-coded for the text: everything follows the person's theme. Nothing wider than
+  // its place in a row: an image that is too wide overflows there instead of shrinking.
+  on('ui.render', { component: 'Pane', requestId: 'progress' }, async ($, e) => {
+    await read($, tick)
+    const t = await read($, turn)
     const p = await read($, plan)
-    const maintenant = await $.clock.now()
+    const now = await $.clock.now()
     const infos: AgentInfo[] = await $.agent.list().catch(() => [])
-    const contexte = await $.session
+    const context = await $.session
       .usage()
       .then(u => u.context.percent)
       .catch(() => undefined)
 
-    const courant = t?.etapes.at(-1)?.etape ?? 0
-    const etatEtape = (n: number): EtatEtape => {
-      if (t === null) return 'a-venir'
-      if ((t.fin !== undefined && !t.arrete) || n < courant) return 'faite'
-      return t.fin === undefined && n === courant ? 'courante' : 'a-venir'
+    const current = t?.stepStarts.at(-1)?.step ?? 0
+    const stepState = (n: number): StepState => {
+      if (t === null) return 'upcoming'
+      if ((t.end !== undefined && !t.stopped) || n < current) return 'done'
+      return t.end === undefined && n === current ? 'current' : 'upcoming'
     }
 
     if (e.surface === 'terminal') {
       const { Box, Text } = $.ui.resolve(e)
-      if (t === null) return <Text dimColor>{T.aucuneTache}</Text>
-      const agents = lignesAgents(t.agents, infos, t.debut)
+      if (t === null) return <Text dimColor>{T.noTask}</Text>
+      const agents = agentRows(t.agents, infos, t.start)
       return (
         <Box flexDirection="column" gap={1}>
-          <Text bold>{t.texte}</Text>
+          <Text bold>{t.text}</Text>
           <Text dimColor>
-            {duree((t.fin ?? maintenant) - t.debut)} · {T.nActions(t.actions)}{contexte !== undefined ? ` · ${T.contexteLigne(contexte)}` : ''}
+            {duration((t.end ?? now) - t.start)} · {T.nActions(t.actions)}{context !== undefined ? ` · ${T.contextLine(context)}` : ''}
           </Text>
-          {t.noms.map((nom, i) => {
-            const etat = etatEtape(i + 1)
+          {t.stepNames.map((name, i) => {
+            const state = stepState(i + 1)
             return (
-              <Text key={`e${i + 1}`} dimColor={etat !== 'courante'} bold={etat === 'courante'}>
-                {etat === 'faite' ? '✓' : etat === 'courante' ? '●' : '○'} {nom}
+              <Text key={`s${i + 1}`} dimColor={state !== 'current'} bold={state === 'current'}>
+                {state === 'done' ? '✓' : state === 'current' ? '●' : '○'} {name}
               </Text>
             )
           })}
           {agents.map(a => (
             <Text key={a.id}>
-              {a.etat === 'actif' ? '●' : a.etat === 'fini' ? '✓' : '×'} {a.description} · {T.nActions(a.actions)} ·{' '}
-              {duree((a.fin ?? maintenant) - a.debut)}
+              {a.state === 'running' ? '●' : a.state === 'done' ? '✓' : '×'} {a.description} · {T.nActions(a.actions)} ·{' '}
+              {duration((a.end ?? now) - a.start)}
             </Text>
           ))}
         </Box>
@@ -343,34 +343,34 @@ export const register: Register = (on, options) => {
     if (t === null) {
       return (
         <Box flexDirection="column" padding={1} gap={1}>
-          <Text>{T.aucuneTache}</Text>
+          <Text>{T.noTask}</Text>
           <Text dimColor wrap="wrap">
-            {T.aucuneTacheDetail}
+            {T.noTaskDetail}
           </Text>
         </Box>
       )
     }
 
-    const enCours = t.fin === undefined
-    const fraction = p !== null ? positionVisible(p, Math.max(0, (maintenant - p.debut) / 1000)) : enCours ? null : 1
-    const agents = lignesAgents(t.agents, infos, t.debut)
-    const actifs = agents.filter(a => a.etat === 'actif').length
-    const actionsAgents = agents.reduce((s, a) => s + a.actions, 0)
-    // Dessinées un peu plus larges que la place, les barres sont réduites par l'app jusqu'au bord
-    // droit, alignées sur le texte.
-    const largeur = Math.max(200, Math.min(720, (e.props.bodyColumns ?? 50) * 9))
-    const etat = enCours ? T.enCours : t.arrete ? T.arrete : T.termine
+    const running = t.end === undefined
+    const fraction = p !== null ? visiblePosition(p, Math.max(0, (now - p.movedAt) / 1000)) : running ? null : 1
+    const agents = agentRows(t.agents, infos, t.start)
+    const runningAgents = agents.filter(a => a.state === 'running').length
+    const agentActions = agents.reduce((s, a) => s + a.actions, 0)
+    // Drawn a little wider than their place, the bars are scaled down by the app to the right edge,
+    // aligned with the text.
+    const width = Math.max(200, Math.min(720, (e.props.bodyColumns ?? 50) * 9))
+    const status = running ? T.inProgress : t.stopped ? T.stopped : T.done
 
-    const chiffre = (cle: string, titre: string, valeur: string) => (
-      <Box key={cle} flexDirection="column" width="25%">
-        <Text dimColor>{titre}</Text>
-        <Text>{valeur}</Text>
+    const stat = (key: string, title: string, value: string) => (
+      <Box key={key} flexDirection="column" width="25%">
+        <Text dimColor>{title}</Text>
+        <Text>{value}</Text>
       </Box>
     )
-    const section = (cle: string, titre: string, detail?: string) => (
-      <Box key={cle} flexDirection="row" gap={1}>
-        <Box key="titre" flexGrow={1}>
-          <Text dimColor>{titre}</Text>
+    const section = (key: string, title: string, detail?: string) => (
+      <Box key={key} flexDirection="row" gap={1}>
+        <Box key="title" flexGrow={1}>
+          <Text dimColor>{title}</Text>
         </Box>
         {detail !== undefined && <Text dimColor>{detail}</Text>}
       </Box>
@@ -378,40 +378,40 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" gap={1} padding={1}>
-        <Box key="demande" flexDirection="column">
+        <Box key="request" flexDirection="column">
           <Text bold wrap="wrap">
-            {t.texte}
+            {t.text}
           </Text>
-          <Text dimColor>{etat}</Text>
+          <Text dimColor>{status}</Text>
         </Box>
-        <Svg key="barre" source={barreMini(fraction, largeur, undefined, undefined, maintenant)} alt={T.avancement} />
-        <Box key="chiffres" flexDirection="row">
-          {chiffre('temps', T.temps, duree((t.fin ?? maintenant) - t.debut))}
-          {chiffre('etape', T.etape, t.noms.length > 0 ? T.sur(t.fin !== undefined && !t.arrete ? t.noms.length : courant, t.noms.length) : '-')}
-          {chiffre('actions', T.actions, String(t.actions + actionsAgents))}
-          {chiffre('contexte', T.contexte, contexte !== undefined ? `${contexte}${T.langue === 'fr' ? ' ' : ''}%` : '-')}
+        <Svg key="bar" source={miniBar(fraction, width, undefined, undefined, now)} alt={T.taskProgress} />
+        <Box key="stats" flexDirection="row">
+          {stat('time', T.time, duration((t.end ?? now) - t.start))}
+          {stat('step', T.step, t.stepNames.length > 0 ? T.outOf(t.end !== undefined && !t.stopped ? t.stepNames.length : current, t.stepNames.length) : '-')}
+          {stat('actions', T.actions, String(t.actions + agentActions))}
+          {stat('context', T.context, context !== undefined ? `${context}${T.language === 'fr' ? ' ' : ''}%` : '-')}
         </Box>
 
-        {t.noms.length > 0 && (
-          <Box key="etapes" flexDirection="column" gap={1}>
-            {section('titre-etapes', T.etapes)}
-            {t.noms.map((nom, i) => {
+        {t.stepNames.length > 0 && (
+          <Box key="steps" flexDirection="column" gap={1}>
+            {section('steps-title', T.steps)}
+            {t.stepNames.map((name, i) => {
               const n = i + 1
-              const etatN = etatEtape(n)
-              const passage = t.etapes.find(x => x.etape === n)
-              const suivant = t.etapes.find(x => x.etape > n)
-              const temps = passage ? duree((suivant?.debut ?? t.fin ?? maintenant) - passage.debut) : ''
-              const alt = etatN === 'faite' ? T.faite : etatN === 'courante' ? T.enCours : T.aVenir
+              const state = stepState(n)
+              const entry = t.stepStarts.find(x => x.step === n)
+              const following = t.stepStarts.find(x => x.step > n)
+              const time = entry ? duration((following?.start ?? t.end ?? now) - entry.start) : ''
+              const alt = state === 'done' ? T.stepDone : state === 'current' ? T.inProgress : T.upNext
               return (
-                <Box key={`e${n}`} flexDirection="row" gap={1} alignItems="center">
-                  <Svg key="icone" source={icone(etatN, maintenant)} alt={alt} width={14} height={14} />
-                  <Box key="nom" flexGrow={1} flexShrink={1}>
-                    <Text bold={etatN === 'courante'} dimColor={etatN === 'faite'} wrap="truncate-end">
-                      {nom}
+                <Box key={`s${n}`} flexDirection="row" gap={1} alignItems="center">
+                  <Svg key="icon" source={stepIcon(state, now)} alt={alt} width={14} height={14} />
+                  <Box key="name" flexGrow={1} flexShrink={1}>
+                    <Text bold={state === 'current'} dimColor={state === 'done'} wrap="truncate-end">
+                      {name}
                     </Text>
                   </Box>
-                  <Box key="temps" flexShrink={0}>
-                    <Text dimColor>{temps}</Text>
+                  <Box key="time" flexShrink={0}>
+                    <Text dimColor>{time}</Text>
                   </Box>
                 </Box>
               )
@@ -421,25 +421,25 @@ export const register: Register = (on, options) => {
 
         {agents.length > 0 && (
           <Box key="agents" flexDirection="column" gap={1}>
-            {section('titre-agents', T.agents, actifs > 0 ? T.agentsEnCours(actifs) : T.agentsTermines(agents.length))}
-            {agents.map((a, rang) => {
+            {section('agents-title', T.agents, runningAgents > 0 ? T.agentsRunning(runningAgents) : T.agentsDone(agents.length))}
+            {agents.map((a, index) => {
               const details = [
                 a.type,
-                nomModele(a.modele),
+                modelName(a.model),
                 T.nActions(a.actions),
-                a.jetons !== undefined ? T.jetons(nombre(a.jetons, T.langue)) : undefined,
-                a.etat === 'arrete' ? T.agentArrete : undefined,
+                a.tokens !== undefined ? T.tokens(compactNumber(a.tokens, T.language)) : undefined,
+                a.state === 'stopped' ? T.agentStoppedNote : undefined,
               ]
               return (
                 <Box key={a.id} flexDirection="row" gap={1} alignItems="flex-start">
-                  <Svg key="agent" source={agentSvg(a.etat, rang, maintenant)} alt={a.etat === 'actif' ? T.agentAuTravail : a.etat === 'fini' ? T.agentTermine : T.agentStoppe} width={22} height={22} />
-                  <Box key="infos" flexDirection="column" flexGrow={1} flexShrink={1}>
-                    <Box key="ligne" flexDirection="row" gap={1}>
-                      <Box key="nom" flexGrow={1} flexShrink={1}>
+                  <Svg key="agent" source={agentSvg(a.state, index, now)} alt={a.state === 'running' ? T.agentAtWork : a.state === 'done' ? T.agentDone : T.agentStopped} width={22} height={22} />
+                  <Box key="info" flexDirection="column" flexGrow={1} flexShrink={1}>
+                    <Box key="row" flexDirection="row" gap={1}>
+                      <Box key="name" flexGrow={1} flexShrink={1}>
                         <Text wrap="truncate-end">{a.description}</Text>
                       </Box>
-                      <Box key="temps" flexShrink={0}>
-                        <Text dimColor>{duree((a.fin ?? maintenant) - a.debut)}</Text>
+                      <Box key="time" flexShrink={0}>
+                        <Text dimColor>{duration((a.end ?? now) - a.start)}</Text>
                       </Box>
                     </Box>
                     <Text dimColor wrap="truncate-end">

@@ -1,40 +1,40 @@
-// `depuis`: où la barre se trouvait vraiment à l'écran au dernier mouvement, de 0 à 1.
-// `debut`: l'heure (ms) du dernier mouvement; chaque dessin reprend son animation à partir de là.
-// `actions`: les actions de Claude et de ses agents depuis le début de l'étape; chacune est un cran.
-// `fini`: Claude a terminé; la barre se remplit jusqu'au bout puis s'efface.
-// `etapeDepuis`: l'heure (ms) où l'étape en cours a commencé; le passage d'étape se joue à partir de là.
-export type Plan = { etapes: string[]; etape: number; depuis: number; debut: number; etapeDepuis?: number; actions?: number; fini?: boolean }
+// `from`: where the bar actually was on screen at the last move, from 0 to 1.
+// `movedAt`: the time (ms) of the last move; each drawing resumes its animation from there.
+// `actions`: the actions of Claude and its agents since the step began; each one is a notch.
+// `done`: Claude has finished; the bar fills up to the end, then fades out.
+// `stepStart`: the time (ms) the current step began; the step change plays from there.
+export type Plan = { steps: string[]; step: number; from: number; movedAt: number; stepStart?: number; actions?: number; done?: boolean }
 
-// Un agent suivi pendant le tour: son heure de départ et de fin, ses actions, ses jetons à la fin.
-export type AgentSuivi = {
+// An agent tracked during the turn: its start and end times, its actions, its tokens at the end.
+export type TrackedAgent = {
   id: string
-  debut: number
-  fin?: number
+  start: number
+  end?: number
   actions: number
-  jetons?: number
-  modele?: string
-  arrete?: boolean
+  tokens?: number
+  model?: string
+  stopped?: boolean
 }
 
-// Le tour en cours: la demande de la personne, l'heure, les actions de Claude, le passage de chaque étape
-// et les agents lancés. Gardé après la fin pour que le panneau montre le bilan.
-export type Tour = {
-  texte: string
-  noms: string[]
-  debut: number
-  fin?: number
-  arrete?: boolean
+// The turn in progress: the person's request, the time, Claude's actions, the start of each step
+// and the agents launched. Kept after the end so that the panel can show the summary.
+export type Turn = {
+  text: string
+  stepNames: string[]
+  start: number
+  end?: number
+  stopped?: boolean
   actions: number
-  etapes: { etape: number; debut: number }[]
-  agents: AgentSuivi[]
+  stepStarts: { step: number; start: number }[]
+  agents: TrackedAgent[]
 }
 
-// Ce que la bande montre: les étapes, chaque étape annoncée avec son heure (ms), l'heure de la fin.
-// Écrit seulement quand une étape change ou que le travail finit: la bande ne bouge pas entre deux.
-export type VueBande = { etapes: string[]; ev: [number, number][]; fin: number | null; graine?: number }
+// What the band shows: the steps, each announced step with its time (ms), the time of the end.
+// Written only when a step changes or the work ends: the band does not move in between.
+export type BandView = { steps: string[]; events: [number, number][]; end: number | null; seed?: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'barre-progression': { plan: Plan | null; tour: Tour | null; tic: number; vue: VueBande | null; enPanne: number | null }
+    'progress-bar': { plan: Plan | null; turn: Turn | null; tick: number; view: BandView | null; faultedPlan: number | null }
   }
 }
