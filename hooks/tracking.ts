@@ -4,7 +4,7 @@ import type { Plan, TrackedAgent, Turn } from '../types'
 export function newTurn(text: string, now: number): Turn {
   const clean = text.replace(/\s+/g, ' ').trim()
   return {
-    text: clean.length > 90 ? `${clean.slice(0, 89)}…` : clean || 'Demande en cours',
+    text: clean.length > 90 ? `${clean.slice(0, 89)}…` : clean,
     stepNames: [],
     start: now,
     actions: 0,

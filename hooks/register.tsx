@@ -316,7 +316,7 @@ export const register: Register = (on, options) => {
       const agents = agentRows(t.agents, infos, t.start)
       return (
         <Box flexDirection="column" gap={1}>
-          <Text bold>{t.text}</Text>
+          <Text bold>{t.text || T.currentRequest}</Text>
           <Text dimColor>
             {duration((t.end ?? now) - t.start)} · {T.nActions(t.actions)}{context !== undefined ? ` · ${T.contextLine(context)}` : ''}
           </Text>
@@ -380,7 +380,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column" gap={1} padding={1}>
         <Box key="request" flexDirection="column">
           <Text bold wrap="wrap">
-            {t.text}
+            {t.text || T.currentRequest}
           </Text>
           <Text dimColor>{status}</Text>
         </Box>

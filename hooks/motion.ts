@@ -16,22 +16,6 @@ export const GLIDE_CURVE = [0.22, 1, 0.36, 1] as const
 const HALF_STEP_ACTIONS = 8
 const STEP_CEILING = 0.9
 
-// The completion, in seconds since the work ended. Everything happens in place, nothing moves back:
-// the bar reaches the end and turns solid red, a flash leaves from the end, a light veil sweeps over
-// the whole bar, then the squares go out in mixed groups while sparks blink.
-export const COMPLETION = {
-  solid: END_S,
-  flash: 0.72,
-  veil: 0.78,
-  dissolve: 0.95,
-  spread: 0.85,
-  sparks: 0.9,
-  window: 1.0,
-  exit: 1.95,
-  exitDur: 0.35,
-} as const
-export const COMPLETION_S = COMPLETION.exit + COMPLETION.exitDur
-
 // The Bezier curve SMIL follows with keySplines, to know where the bar is on screen.
 function bezier([x1, y1, x2, y2]: readonly [number, number, number, number], p: number): number {
   if (p <= 0) return 0

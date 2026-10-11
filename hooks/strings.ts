@@ -14,6 +14,7 @@ export type Strings = {
   command: string
   noTask: string
   noTaskDetail: string
+  currentRequest: string
   inProgress: string
   stopped: string
   taskProgress: string
@@ -47,6 +48,7 @@ const EN: Strings = {
   command: 'Show the progress of the current task',
   noTask: 'No task in progress',
   noTaskDetail: 'Progress shows here as soon as Claude announces the steps of a request.',
+  currentRequest: 'Current request',
   inProgress: 'In progress',
   stopped: 'Stopped',
   taskProgress: 'Task progress',
@@ -80,6 +82,7 @@ const FR: Strings = {
   command: 'Afficher la progression de la tâche en cours',
   noTask: 'Aucune tâche en cours',
   noTaskDetail: "La progression s'affiche ici dès que Claude annonce les étapes d'une demande.",
+  currentRequest: 'Demande en cours',
   inProgress: 'En cours',
   stopped: 'Arrêté',
   taskProgress: 'Avancement de la tâche',
