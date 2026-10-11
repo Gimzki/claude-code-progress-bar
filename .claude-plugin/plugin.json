@@ -1,0 +1,29 @@
+{
+  "name": "barre-progression",
+  "version": "1.0.0",
+  "description": "An animated progress bar above the prompt while Claude works: Claude announces its steps, four orange dots dance on the current step, and a messenger dot glides along a dotted thread to the next one.",
+  "author": {
+    "name": "Jimmy Pellerin"
+  },
+  "license": "MIT",
+  "keywords": [
+    "progress",
+    "progress-bar",
+    "steps",
+    "mod",
+    "ui"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the bar and of the panel: en (English) or fr (French).",
+      "default": "en",
+      "options": [
+        "en",
+        "fr"
+      ]
+    }
+  }
+}
