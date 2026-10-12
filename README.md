@@ -48,6 +48,19 @@ Nothing leaves your machine. The mod makes no network request and reads or write
 
 The mod never calls a tool or runs a command itself. The tool calls in `tests/` are made through Claude Code's test kit, to play a session in the tests.
 
+Every hook, and what it changes:
+
+| Hook | What it does |
+| --- | --- |
+| `session.start` | Registers the `progress` tool and the `/progress` command, and starts a one-second clock that only writes while a task is in progress (for the panel's durations). |
+| `prompt.compose` | Adds one section at the end of the system prompt, and changes nothing else: *"When a request will take you more than three actions, first call mcp__progress-bar__progress with your steps, then call it again each time a new step starts. Never for a short answer, never from a subagent."* |
+| `turn.start` | Notes the text of the request, to show it in the panel. |
+| `tool.call` (every tool) | Counts the action for the panel, then passes the call on unchanged. |
+| `tool.call` (`progress` only) | Answers the mod's own `progress` tool: it records the plan and replies with one line, such as `Bar updated: step 2 of 5.` Calls from subagents are ignored. No other tool is ever answered in place of the tool. |
+| `turn.complete` | Plays the end of the bar, then clears it. An interrupted turn clears it at once. |
+| `command.run` (`/progress`) | Opens the panel. Nothing is written to the conversation. |
+| `ui.render` (band above the prompt, and the panel) | Draws the bar and the panel. |
+
 ## Development
 
 ```
