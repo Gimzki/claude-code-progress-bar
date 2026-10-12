@@ -22,9 +22,6 @@ const turn = atom({ plugin: 'progress-bar', key: 'turn' } as const, null as Turn
 const tick = atom({ plugin: 'progress-bar', key: 'tick' } as const, 0)
 // What the band shows, written only when a step changes or the work ends.
 const view = atom({ plugin: 'progress-bar', key: 'view' } as const, null as BandView | null)
-// The plan whose Client failed in the app (the time of its first step): for that plan, the band draws
-// the image itself; the next plan tries the Client again.
-const faultedPlan = atom({ plugin: 'progress-bar', key: 'faultedPlan' } as const, null as number | null)
 // What the drawing receives from the band.
 const viewOf = (v: BandView): View => ({ n: v.steps.length, events: v.events, end: v.end, seed: v.seed ?? v.events[0]?.[1] ?? 0 })
 // Beyond this, the history of one list of steps teaches nothing more (it only moves forward).
@@ -254,17 +251,17 @@ export const register: Register = (on, options) => {
 
     // On the desktop, the bar is a Client: the app keeps it as it is between two replies from the
     // engine, and it only redraws with its props, that is, when a step changes or the work ends.
-    if (e.surface === 'desktop' && (await read($, faultedPlan)) !== (v.events[0]?.[1] ?? null)) {
-      const { Client } = $.ui.resolve(e)
+    if (e.surface === 'desktop') {
+      const elements = $.ui.resolve(e)
       return (
         <Box key="bar" flexDirection="column" gap={1}>
           {row}
-          <Client key="thread" module="./bar-client.tsx" props={{ view: viewOf(v), alt }} width="100%" />
+          {elements.Client({ key: 'thread', module: './bar-client.tsx', props: { view: viewOf(v), alt }, width: '100%' })}
         </Box>
       )
     }
 
-    // Elsewhere, or if the Client failed: the image directly, redrawn every second.
+    // Elsewhere: the image directly, redrawn every second.
     await read($, tick)
     const now = await $.clock.now()
     const { Svg } = $.ui.resolve(e)
@@ -274,18 +271,6 @@ export const register: Register = (on, options) => {
         <Svg key="thread" source={sceneSvg(viewOf(v), now)} alt={alt} width={4096} height={26} />
       </Box>
     )
-  })
-
-  // The bar's Client failed in the app: for this plan, the band falls back to the image drawn by the
-  // engine, and the reason goes to the debug log.
-  on('ui.fault', async ($, e, next) => {
-    if (e.module.includes('bar-client')) {
-      const v = await read($, view)
-      await update($, faultedPlan, () => v?.events[0]?.[1] ?? null)
-      $.ui.log(`progress-bar: the bar display failed (${e.phase}): ${e.reason}`, { to: 'debug' })
-    }
-
-    return next(e)
   })
 
   // The panel, in the grammar of the app's panels: the request and its status, the bar, four figures

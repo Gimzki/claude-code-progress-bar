@@ -46,6 +46,8 @@ Everything the bar shows is derived from the history of the steps (which step, a
 
 Nothing leaves your machine. The mod makes no network request and reads or writes no file. It keeps the bar's state in Claude Code's own session state, adds one line to the system prompt (asking Claude to announce its steps), registers the `progress` tool and the `/progress` command, and reads two things from Claude Code for the panel: the list of subagents and the share of the context window in use.
 
+The mod never calls a tool or runs a command itself. The tool calls in `tests/` are made through Claude Code's test kit, to play a session in the tests.
+
 ## Development
 
 ```

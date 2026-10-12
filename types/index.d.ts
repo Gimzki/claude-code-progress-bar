@@ -35,6 +35,6 @@ export type BandView = { steps: string[]; events: [number, number][]; end: numbe
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { plan: Plan | null; turn: Turn | null; tick: number; view: BandView | null; faultedPlan: number | null }
+    'progress-bar': { plan: Plan | null; turn: Turn | null; tick: number; view: BandView | null }
   }
 }
