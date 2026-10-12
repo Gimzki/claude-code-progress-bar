@@ -42,6 +42,10 @@ Everything the bar shows is derived from the history of the steps (which step, a
 - On the desktop app, the bar is a surface module (`hooks/bar-client.tsx`) that the app keeps as it is when it rebuilds the band, and redraws only when a step changes, the work ends or the band changes width. Each new event is timed from the moment the display sees it.
 - The drawing (`hooks/dots.ts`) is one SVG image. Positions are static CSS `calc()` values, so the bar is right at any width; everything that moves is SMIL, the one animation clock that starts at the same instant in every image. An animation already played is never written again: its end state becomes the image's starting state.
 
+## What it reads and sends
+
+Nothing leaves your machine. The mod makes no network request and reads or writes no file. It keeps the bar's state in Claude Code's own session state, adds one line to the system prompt (asking Claude to announce its steps), registers the `progress` tool and the `/progress` command, and reads two things from Claude Code for the panel: the list of subagents and the share of the context window in use.
+
 ## Development
 
 ```
