@@ -20,7 +20,7 @@ In a terminal session the bar is drawn in characters: a solid dot per finished s
 At the prompt of a Claude Code terminal session:
 
 ```
-/plugin install progress-bar --marketplace Gimzki/progress-bar
+/plugin install progress-bar --marketplace Gimzki/claude-code-progress-bar
 ```
 
 Answer `y` to add the marketplace, then choose a scope. Once installed at the user scope, the bar also shows in the Claude desktop app's Code tab.
