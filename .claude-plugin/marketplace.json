@@ -8,7 +8,7 @@
     {
       "name": "progress-bar",
       "source": "./",
-      "description": "An animated progress bar above the prompt while Claude works: Claude announces its steps, four orange dots dance on the current step, and a messenger dot glides along a dotted thread to the next one."
+      "description": "Stop staring at a spinner. Juggling several tasks? One glance tells you exactly where Claude is: the plan, the step it's on, and what's left, live above your prompt."
     }
   ]
 }
